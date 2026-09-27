@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setu Emergency Portal</title>
+    <!-- Lightweight Tailwind CSS for rapid styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Smooth transition for the beacon flashing */
+        body { transition: background-color 0.2s ease; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans min-h-screen flex flex-col items-center p-6">
+
+    <!-- SOS Form Screen -->
+    <div id="form-container" class="w-full max-w-md bg-gray-800 rounded-xl shadow-2xl p-6 mt-10 border border-red-500">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-extrabold text-red-500 tracking-wider">SETU EMERGENCY</h1>
+            <p class="text-gray-400 text-sm mt-2">Connected to Node: 042 (Offline Mesh)</p>
+        </div>
+
+        <form id="sosForm" class="flex flex-col gap-5">
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Full Name</label>
+                <input type="text" id="victim_name" required class="w-full p-3 bg-gray-700 rounded focus:ring-2 focus:ring-red-500 outline-none text-white" placeholder="e.g. Ravi Kumar">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">People with you</label>
+                <input type="number" id="people_count" min="1" value="1" required class="w-full p-3 bg-gray-700 rounded focus:ring-2 focus:ring-red-500 outline-none text-white">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Medical Status</label>
+                <select id="medical_status" class="w-full p-3 bg-gray-700 rounded focus:ring-2 focus:ring-red-500 outline-none text-white">
+                    <option value="No immediate danger">No immediate danger</option>
+                    <option value="Trapped - Need Rescue">Trapped - Need Rescue</option>
+                    <option value="Severe Injury / Bleeding">Severe Injury / Bleeding</option>
+                </select>
+            </div>
+
+            <button type="submit" id="submitBtn" class="mt-6 w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-lg text-xl uppercase tracking-wider transition-colors shadow-[0_0_15px_rgba(220,38,38,0.5)]">
+                Transmit SOS
+            </button>
+        </form>
+        <p id="errorMessage" class="text-red-400 text-center mt-4 hidden">Transmission failed. Try again.</p>
+    </div>
+
+    <!-- Success / Beacon Screen (Hidden by default) -->
+    <div id="success-screen" class="hidden w-full max-w-md text-center mt-20 p-6 rounded-xl">
+        <h1 class="text-4xl font-bold text-green-500 mb-4 transition-colors duration-300" id="status-title">SOS SENT</h1>
+        <p class="text-xl" id="status-subtitle">NDRF has received your coordinates.</p>
+        <p class="mt-4 text-sm opacity-80" id="status-instruction">Stay exactly where you are. Help is being routed.</p>
+    </div>
+
+    <script>
+        // IMPORTANT: Replace this with your laptop's actual hotspot IPv4 address
+        const SERVER_IP = '10.89.163.181:8000'; 
+        
+        const API_SUBMIT = `http://${SERVER_IP}/api/submit_sos/`;
+        const API_CHECK_BEACON = `http://${SERVER_IP}/api/check_beacon/`;
+
+        // 1. Handle Form Submission
+        document.getElementById('sosForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+            btn.innerText = 'Transmitting...';
+            btn.disabled = true;
+
+            const name = document.getElementById('victim_name').value;
+
+            // Get GPS coordinates (with hackathon demo fallback)
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => sendPayload(pos.coords.latitude, pos.coords.longitude, name),
+                    (err) => sendPayload(15.8281, 78.0373, name), // Fallback
+                    { timeout: 5000 }
+                );
+            } else {
+                sendPayload(15.8281, 78.0373, name);
+            }
+        });
+
+        // 2. Transmit to Django
+        function sendPayload(lat, lon, name) {
+            const payload = {
+                node_id: "SETU_NODE_042",
+                victim_name: name,
+                people_count: parseInt(document.getElementById('people_count').value),
+                medical_status: document.getElementById('medical_status').value,
+                latitude: lat,
+                longitude: lon
+            };
+
+            fetch(API_SUBMIT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Hide form, show success screen
+                    document.getElementById('form-container').classList.add('hidden');
+                    document.getElementById('success-screen').classList.remove('hidden');
+                    
+                    // Start listening for the NDRF radar trigger
+                    startListeningForRescue(name);
+                } else {
+                    throw new Error('Network response error');
+                }
+            })
+            .catch(error => {
+                document.getElementById('errorMessage').classList.remove('hidden');
+                const btn = document.getElementById('submitBtn');
+                btn.innerText = 'Transmit SOS';
+                btn.disabled = false;
+            });
+        }
+
+        // 3. The Micro-Targeting Beacon Listener
+        let isFlashing = false;
+
+        function startListeningForRescue(victimName) {
+            // Check the Django server every 3 seconds
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_CHECK_BEACON}?name=${encodeURIComponent(victimName)}`);
+                    const data = await response.json();
+                    
+                    if (data.beacon_active && !isFlashing) {
+                        isFlashing = true;
+                        clearInterval(interval); // Stop polling once triggered
+                        
+                        // Hijack Screen Colors
+                        setInterval(() => {
+                            document.body.style.backgroundColor = 
+                                document.body.style.backgroundColor === 'rgb(255, 0, 0)' ? '#ffffff' : '#ff0000';
+                        }, 300);
+
+                        // Hijack Vibration Motor
+                        if ("vibrate" in navigator) {
+                            setInterval(() => navigator.vibrate([500, 200, 500]), 1000);
+                        }
+
+                        // Update UI Text for Rescue
+                        document.getElementById('status-title').innerHTML = '<span class="text-black text-5xl font-black">NDRF IS HERE</span>';
+                        document.getElementById('status-subtitle').innerHTML = '<span class="text-black font-bold text-2xl">SHOUT! MAKE NOISE!</span>';
+                        document.getElementById('status-instruction').classList.add('hidden');
+                    }
+                } catch (error) {
+                    console.log("Awaiting NDRF proximity beacon...");
+                }
+            }, 3000); 
+        }
+    </script>
+</body>
+</html>

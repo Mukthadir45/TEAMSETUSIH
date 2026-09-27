@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NDRF Field Radar (Micro-Targeting)</title>
+    <!-- Lightweight Tailwind CSS for rapid styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Pulse effect for the active radar scanning */
+        .radar-sweep {
+            animation: sweep 2s linear infinite;
+        }
+        @keyframes sweep {
+            0% { opacity: 0.8; transform: scale(0.95); }
+            50% { opacity: 0.3; transform: scale(1.05); }
+            100% { opacity: 0.8; transform: scale(0.95); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans min-h-screen flex flex-col">
+
+    <!-- Top Navigation Bar (Field View) -->
+    <header class="h-20 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-6">
+        <div class="flex items-center gap-4">
+            <div class="w-4 h-4 bg-yellow-500 rounded-full radar-sweep"></div>
+            <h1 class="text-2xl font-bold tracking-widest text-gray-100">SETU <span class="text-yellow-500">FIELD RADAR</span></h1>
+        </div>
+        <div class="text-gray-400 text-sm flex items-center gap-4">
+            <span>Target: <span class="text-white font-bold">NODE 042</span></span>
+            <span class="bg-green-900 text-green-400 px-2 py-1 rounded text-xs font-bold border border-green-700">LOCAL WI-FI CONNECTED</span>
+        </div>
+    </header>
+
+    <!-- Main Content Layout -->
+    <div class="flex-grow p-6 flex justify-center">
+        <div class="w-full max-w-4xl">
+            
+            <div class="mb-6">
+                <h2 class="text-3xl font-extrabold text-gray-100 mb-2">Proximity Scanner</h2>
+                <p class="text-gray-400">Scanning local 2.4GHz frequencies for victims connected to Node 042. Distance is estimated via RSSI (Signal Strength).</p>
+            </div>
+
+            <!-- Radar Target List -->
+            <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-2xl">
+                <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                    <h3 class="font-bold text-xl text-gray-300">Connected Devices</h3>
+                    <span class="text-xs text-yellow-500 font-mono animate-pulse">SCANNING...</span>
+                </div>
+                
+                <div id="radar-list" class="flex flex-col gap-4">
+                    <p class="text-gray-500 italic text-center py-8">Awaiting target locks...</p>
+                </div>
+            </div>
+            
+            <div class="mt-6 p-4 bg-gray-800 rounded border border-gray-700 text-sm text-gray-400">
+                <p><strong>Instruction:</strong> When proximity is &lt; 50m, click <strong>[ACTIVATE BEACON]</strong> to hijack the victim's smartphone display and vibration motor. Look for a flashing red strobe light in the debris.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Use relative URLs since this page is served directly by the Django backend
+        const API_GET_ALERTS = '/api/get_alerts/';
+        const API_TRIGGER_BEACON = '/api/trigger_beacon/';
+        const API_MARK_RESCUED = '/api/mark_rescued/';
+
+        async function fetchRadarData() {
+            try {
+                const response = await fetch(API_GET_ALERTS);
+                const data = await response.json();
+                const radarList = document.getElementById('radar-list');
+                
+                if (data.alerts.length === 0) {
+                    radarList.innerHTML = '<p class="text-green-500 font-bold text-center py-8">No active devices connected to this node.</p>';
+                    return;
+                }
+
+                radarList.innerHTML = ''; // Clear previous list
+
+                data.alerts.forEach(alert => {
+                    // Simulating the hardware RSSI logic for the pitch presentation
+                    // Fluctuate signal between -60dBm (close) to -85dBm (far)
+                    const fakeSignal = Math.floor(Math.random() * (85 - 60 + 1) + 60);
+                    const distanceEstimate = (fakeSignal - 55); // Rough visual math
+                    
+                    // Button state changes if beacon was already clicked
+                    const btnClass = alert.beacon_active 
+                        ? 'bg-gray-600 cursor-not-allowed text-gray-400' 
+                        : 'bg-red-600 hover:bg-red-500 shadow-[0_0_10px_rgba(220,38,38,0.5)]';
+                    const btnText = alert.beacon_active ? 'BEACON ACTIVE' : 'ACTIVATE BEACON';
+                    const btnDisabled = alert.beacon_active ? 'disabled' : '';
+
+                    const card = `
+                        <div class="flex flex-col md:flex-row justify-between items-center bg-gray-700 p-5 rounded-lg border-l-4 ${alert.beacon_active ? 'border-red-500' : 'border-gray-500'} transition-all">
+                            
+                            <div class="flex-grow mb-4 md:mb-0">
+                                <p class="font-bold text-2xl text-white mb-1">${alert.victim_name}</p>
+                                <p class="text-sm text-gray-300">Condition: <span class="text-yellow-400 font-bold">${alert.medical_status}</span></p>
+                                <p class="text-xs text-gray-400 mt-1 font-mono">MAC: ${generateFakeMac(alert.id)}</p>
+                            </div>
+                            
+                            <div class="text-center px-8 border-r md:border-r-0 md:border-l border-gray-600 mb-4 md:mb-0">
+                                <p class="text-yellow-400 font-mono font-black text-3xl">-${fakeSignal} <span class="text-lg">dBm</span></p>
+                                <p class="text-sm text-gray-300 font-bold mt-1">Est. Distance: ~${distanceEstimate}m</p>
+                            </div>
+                            
+                            <div class="flex flex-col gap-2 w-full md:w-auto text-right pl-4">
+    <button onclick="triggerBeacon(${alert.id})" ${btnDisabled} class="w-full px-6 py-3 rounded-lg font-black tracking-wider transition-colors ${btnClass}">
+        ${btnText}
+    </button>
+    <button onclick="markRescued(${alert.id})" class="w-full px-6 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold transition-colors shadow-lg">
+        MARK RESCUED ✔
+    </button>
+</div>
+                        </div>
+                    `;
+                    radarList.innerHTML += card;
+                });
+            } catch (error) {
+                console.error("Radar sync failed:", error);
+            }
+        }
+
+        async function triggerBeacon(victimId) {
+    try {
+        console.log("Triggering beacon for ID:", victimId); 
+        
+        // Changed method to GET to seamlessly bypass Django's session cookie CSRF block
+        const response = await fetch(`${API_TRIGGER_BEACON}?id=${victimId}`, { 
+            method: 'GET', 
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            alert("COMMAND SENT: Target device screen and haptics hijacked. Look for the strobe light.");
+            fetchRadarData(); 
+        } else {
+            alert(`BACKEND REJECTED: Error Code ${response.status}`); 
+        }
+    } catch (error) {
+        alert(`NETWORK ERROR: ${error.message}`);
+    }
+}
+
+        // Helper function to generate a consistent fake MAC address based on the DB ID
+        function generateFakeMac(id) {
+            const hex = id.toString(16).padStart(2, '0').toUpperCase();
+            return `A1:B2:C3:D4:E5:${hex}`;
+        }
+
+        // Refresh the fake radar numbers and sync with database every 2 seconds
+        setInterval(fetchRadarData, 2000);
+        fetchRadarData();
+
+        async function markRescued(victimId) {
+    // Optional: Add a confirmation so rescuers don't misclick in the field
+    if (!confirm("Confirm victim is physically secured in the rescue vehicle?")) return;
+    
+    try {
+        const response = await fetch(`${API_MARK_RESCUED}?id=${victimId}`, { method: 'GET' });
+        
+        if (response.ok) {
+            alert("VICTIM SECURED: Automatically removed from active mesh network.");
+            fetchRadarData(); // Refreshes the radar, making them disappear
+        } else {
+            alert(`BACKEND REJECTED: Error Code ${response.status}`); 
+        }
+    } catch (error) {
+        alert(`NETWORK ERROR: ${error.message}`);
+    }
+}
+    </script>
+</body>
+</html>
